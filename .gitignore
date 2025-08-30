@@ -1,0 +1,52 @@
+# Environment variables
+.env
+.flaskenv
+
+# Virtual environment
+.venv/
+env/
+venv/
+/tmp/
+
+# Python specific files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+build/
+dist/
+eggs/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Editor/IDE specific files
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+*.DS_Store
+Thumbs.db
+
+# Database files (if applicable)
+*.sqlite3
+*.db
+data.sqlite
+
+# Log files
+*.log
+
+# Uploaded files or media (if applicable)
+/media/
+/static/uploaded/
+
+# Docker related files (if applicable)
+.dockerignore
+Dockerfile.bak
+docker-compose.yml.bak
+
+# Test reports
+.coverage
+htmlcov/
