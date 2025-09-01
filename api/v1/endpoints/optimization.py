@@ -1,17 +1,63 @@
-from fastapi import APIRouter, UploadFile, File, HTTPException
+from fastapi import APIRouter, UploadFile, File, HTTPException, BackgroundTasks
 from core.config import settings
 from models.booking import Booking
 from services.optimization_service import optimize_routes
+from pydantic import BaseModel, HttpUrl
+import uuid
+import time
+import requests
 
 # from app.utils.data_loader import read_csv_to_json
 # from typing import List
-# import asyncio
-# from app.services.optimization_service import process_booking_geocoding
+import asyncio
+from services.optimization_service import process_booking_geocoding
 # from app.services.tsp_optimization_service import main
 import json
 
 router = APIRouter()
 
+class LongRunningJobRequest(BaseModel):
+    data: list[Booking]
+    webhook_url: HttpUrl
+
+@router.post("/start-job-with-webhook")
+async def start_job_with_webhook(request: LongRunningJobRequest, background_tasks: BackgroundTasks):
+    job_id = str(uuid.uuid4())
+
+    background_tasks.add_task(process_and_notify, job_id, request.data, str(request.webhook_url))
+    return {"job_id": job_id, "message": "Job started. A webhook will be sent upon completion."}
+
+async def process_and_notify(job_id: str, data: list[Booking], webhook_url: str):
+    print(f"Starting job {job_id} with bookings_data and webhook_url: {webhook_url}")
+    
+    # Create semaphore to limit concurrent geocoding requests (adjust based on API limits)
+    # Google Maps API allows up to 50 QPS by default, so we use 10 concurrent requests
+    # semaphore = asyncio.Semaphore(10)
+    
+  
+    # Process all bookings concurrently
+    # tasks = [process_booking_geocoding(booking, semaphore) for booking in bookings_data]  
+    # await asyncio.gather(*tasks)
+    
+    bookings_data = []
+  
+    for booking in updated_bookings:
+        # Validate each booking using Pydantic
+        try:
+            bookings_data.append(Booking(**booking))
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail=f"Invalid booking data: {str(e)}")
+    
+    optimized_routes = optimize_routes(bookings_data)
+    
+    result = {"job_id": job_id, "status": "completed", "optimized_routes": optimized_routes}
+    
+    try:
+        response = requests.post(webhook_url, json=result)
+        response.raise_for_status()
+        print(f"Successfully sent webhook for job {job_id}")
+    except requests.exceptions.RequestException as e:
+        print(f"Failed to send webhook for job {job_id}: {e}")
 
 @router.get('/')
 async def get_optimized_routes():
