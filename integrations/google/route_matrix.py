@@ -33,10 +33,10 @@ def build_matrices(response):
 
 def create_matrices(addresses, force_refresh=False):
     """Builds both distance and time matrices for given addresses."""
-    if not force_refresh and os.path.exists(CACHE_FILE):
-        with open(CACHE_FILE, "r") as f:
-            cache = json.load(f)
-            return cache["distance_matrix"], cache["time_matrix"]
+    # if not force_refresh and os.path.exists(CACHE_FILE):
+    #     with open(CACHE_FILE, "r") as f:
+    #         cache = json.load(f)
+    #         return cache["distance_matrix"], cache["time_matrix"]
 
     num_addresses = len(addresses)
     distance_matrix = [[0] * num_addresses for _ in range(num_addresses)]
@@ -69,12 +69,12 @@ def create_matrices(addresses, force_refresh=False):
                     time_matrix[i + oi][j + dj] = time_val
 
     # ✅ Cache result
-    with open(CACHE_FILE, "w") as f:
-        json.dump({
-            "addresses": addresses,
-            "distance_matrix": distance_matrix,
-            "time_matrix": time_matrix
-        }, f, indent=2)
+    # with open(CACHE_FILE, "w") as f:
+    #     json.dump({
+    #         "addresses": addresses,
+    #         "distance_matrix": distance_matrix,
+    #         "time_matrix": time_matrix
+    #     }, f, indent=2)
 
     return distance_matrix, time_matrix
 

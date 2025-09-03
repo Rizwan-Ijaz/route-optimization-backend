@@ -4,7 +4,7 @@ import chardet
 from datetime import datetime
 from io import StringIO
 import pytz
-from app.models.booking import Booking, Coordinates
+from models.booking import Booking, Coordinates
 from typing import Optional, List
 
 def load_json_data(file_path: str) -> list[dict]:

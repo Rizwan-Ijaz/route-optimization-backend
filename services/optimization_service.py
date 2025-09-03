@@ -1,5 +1,6 @@
 import asyncio
 from models.booking import Booking, Coordinates
+from models.vehicle import VehicleModel
 from integrations.google.route_matrix import create_matrices
 from integrations.google.geocoding import geocode_address_async
 from typing import Tuple, List
@@ -8,15 +9,16 @@ from fastapi import HTTPException
 from ortools.constraint_solver import routing_enums_pb2
 from ortools.constraint_solver import pywrapcp
 
-from utils.common import datetime_to_seconds, seconds_to_hhmm, to_dict
+from utils.common import to_dict, seconds_to_iso_string
 
-def create_data_model(bookings, locations):
+def create_data_model(bookings: List[Booking], locations, vehicles: List[VehicleModel]):
     """Stores the data for the routing problem."""
     # Build distance & time matrices from Google API response
     distance_matrix, time_matrix = create_matrices(locations)
     
     data = {}
     data["bookings"] = bookings
+    data["vehicles"] = vehicles
     data["distance_matrix"] = distance_matrix
     data["time_matrix"] = time_matrix
     data["depot"] = 0
@@ -36,9 +38,10 @@ def create_data_model(bookings, locations):
     for i, booking in enumerate(bookings, start=1):
         booking_id = booking.id
 
-        # convert datetime → seconds
-        pickup_time = datetime_to_seconds(booking.pickupTime)
-        delivery_time = datetime_to_seconds(booking.deliveryTime)
+       
+        # Convert pickup and delivery times to seconds
+        pickup_time = (booking.pickup_time.hour * 3600) + (booking.pickup_time.minute * 60) + booking.pickup_time.second
+        delivery_time = (booking.delivery_time.hour * 3600) + (booking.delivery_time.minute * 60) + booking.delivery_time.second
 
         # pickup window ±25 mins
         pickup_start = pickup_time - 1500
@@ -50,7 +53,7 @@ def create_data_model(bookings, locations):
 
         # store booking mapping with demands
         seat_demand = booking.passengers
-        wheelchair_demand = booking.wheelchairs  # Remove getattr to assume attribute always present; raises error if missing
+        wheelchair_demand = 0 # Assuming no wheelchair demand for simplicity
 
         seat_demands.append(seat_demand)
         seat_demands.append(-seat_demand)
@@ -61,7 +64,7 @@ def create_data_model(bookings, locations):
         booking_map[i * 2 - 1] = {
             "id": booking_id,
             "type": "pickup",
-            "address": booking.pickupAddress,
+            "address": booking.pickup_address,
             "window": (pickup_start, pickup_end),
             "seats_demand": seat_demand,
             "wheelchair_demand": wheelchair_demand,
@@ -69,7 +72,7 @@ def create_data_model(bookings, locations):
         booking_map[i * 2] = {
             "id": booking_id,
             "type": "delivery",
-            "address": booking.deliveryAddress,
+            "address": booking.delivery_address,
             "window": (delivery_start, delivery_end),
             "seats_demand": -seat_demand,
             "wheelchair_demand": -wheelchair_demand,
@@ -93,9 +96,9 @@ def create_data_model(bookings, locations):
     data["pickups_deliveries"] = pickups_deliveries
     data["time_windows"] = time_windows
     data["booking_map"] = booking_map
-    data["num_vehicles"] = 4
-    data["seat_capacities"] = [8, 8, 8, 8]  # All vehicles have 8 total seats
-    data["wheelchair_capacities"] = [2, 2, 2, 0] # Vehicle 3 has no wheelchair space
+    data["num_vehicles"] = len(vehicles)
+    data["seat_capacities"] = [vehicle.total_seats for vehicle in vehicles] # Extract seat capacities from vehicles
+    data["wheelchair_capacities"] = [0] * len(vehicles) # Assuming no wheelchair capacity for simplicity
     data["seat_demands"] = seat_demands
     data["wheelchair_demands"] = wheelchair_demands
     return data
@@ -161,14 +164,14 @@ def print_solution(data, manager, routing, solution, time_dimension):
     print(f"Total Distance of all routes: {total_distance}m")
     print(f"Total Time of all routes: {total_time}s")
 
-def optimize_routes(bookings_data: List[Booking]) -> None:
+def optimize_routes(bookings_data: List[Booking], vehicles: List[VehicleModel]) -> None:
     """Optimize pickup and delivery routes with distance + time windows."""
 
     # Prepare locations (lat,lng) and index map
     locations, index_map = prepare_locations(bookings_data)
 
     # Build problem data
-    data = create_data_model(bookings_data, locations)
+    data = create_data_model(bookings_data, locations, vehicles)
 
     # Routing index manager
     manager = pywrapcp.RoutingIndexManager(
@@ -396,6 +399,8 @@ def extract_solution(data, manager, routing, solution, time_dimension):
             node_index = manager.IndexToNode(index)
             arrival_time = solution.Value(time_dimension.CumulVar(index))
             
+            arrival_time = seconds_to_iso_string(arrival_time)
+            
             # Get the node's details from the mapping
             details = node_mapping.get(node_index)
 
@@ -415,7 +420,7 @@ def extract_solution(data, manager, routing, solution, time_dimension):
                 # Store booking-specific times for the cluster output
                 if idx not in bookings_in_route:
                     bookings_in_route[idx] = {
-                        "booking": booking.copy() if isinstance(booking, dict) else booking.model_dump(),
+                        "booking_id": booking.id,
                     }
                 if label == "Pickup":
                     bookings_in_route[idx]["pickup_time"] = arrival_time
@@ -429,12 +434,13 @@ def extract_solution(data, manager, routing, solution, time_dimension):
         final_time = solution.Value(time_dimension.CumulVar(index))
         route_path.append({
             "node_index": manager.IndexToNode(index),
-            "arrival_time": final_time,
+            "arrival_time": seconds_to_iso_string(final_time),
         })
 
         if bookings_in_route:
+            vehicle = data["vehicles"][vehicle_id]
             clusters.append({
-                "vehicle_id": vehicle_id,
+                "vehicle_id": str(vehicle.id),
                 "bookings": list(bookings_in_route.values()),
                 "path": route_path
             })
@@ -445,7 +451,7 @@ def extract_solution(data, manager, routing, solution, time_dimension):
 
     return {
         "clusters": to_dict(clusters),
-        "dropped_bookings": [data["bookings"][i] for i in sorted(list(dropped_booking_indices))]
+        "dropped_bookings": [data["bookings"][i].id for i in sorted(list(dropped_booking_indices))]
     }
 
 def prepare_locations(bookings_data):
@@ -473,20 +479,20 @@ def prepare_locations(bookings_data):
     return locations, index_map
 
 
-async def process_booking_geocoding(booking, semaphore: asyncio.Semaphore) -> None:
+async def process_booking_geocoding(booking: Booking, semaphore: asyncio.Semaphore) -> None:
     """Process geocoding for a single booking with rate limiting"""
     async with semaphore:  # Limit concurrent requests
         tasks = []
         
         # Check if pickup geocoding is needed
-        if (booking.pickupAddress and 
+        if (booking.pickup_address and 
             (not booking.pickup or (booking.pickup.latitude == 0.0 and booking.pickup.longitude == 0.0))):
-            tasks.append(('pickup', geocode_address_async(booking.pickupAddress)))
+            tasks.append(('pickup', geocode_address_async(booking.pickup_address)))
         
         # Check if delivery geocoding is needed
-        if (booking.deliveryAddress and 
+        if (booking.delivery_address and 
             (not booking.delivery or (booking.delivery.latitude == 0.0 and booking.delivery.longitude == 0.0))):
-            tasks.append(('delivery', geocode_address_async(booking.deliveryAddress)))
+            tasks.append(('delivery', geocode_address_async(booking.delivery_address)))
         
         # Execute geocoding tasks concurrently for this booking
         if tasks:

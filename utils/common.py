@@ -1,4 +1,5 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from dateutil import parser
 
 def datetime_to_seconds(datetime_string: str) -> int:
     """
@@ -14,7 +15,7 @@ def datetime_to_seconds(datetime_string: str) -> int:
     """
     try:
         # Parse the datetime string, handling the timezone offset
-        dt_object = datetime.strptime(datetime_string, '%Y-%m-%dT%H:%M:%S%z')
+        dt_object = parser.isoparse(datetime_string)
 
         # Extract the hour, minute, and second from the parsed datetime object
         hours = dt_object.hour
@@ -57,3 +58,41 @@ def to_dict(obj):
             result[key] = value
 
     return result
+
+
+
+def seconds_to_iso_string(total_seconds_of_day: int) -> str:
+    """
+    Converts a total number of seconds from the beginning of the day
+    into a UTC ISO 8601 formatted string, using the current date.
+
+    Args:
+        total_seconds_of_day: The number of seconds from midnight (0-86399).
+
+    Returns:
+        A string representing the current UTC date and the time based on the
+        provided seconds in ISO 8601 format.
+    """
+    # Calculate hours, minutes, and seconds from the total seconds
+    hours = total_seconds_of_day // 3600
+    minutes = (total_seconds_of_day % 3600) // 60
+    seconds = total_seconds_of_day % 60
+
+    # Get the current date in UTC
+    current_date = datetime.now(timezone.utc).date()
+
+    # Combine the current date with the time calculated from the seconds
+    utc_datetime = datetime(
+        current_date.year,
+        current_date.month,
+        current_date.day,
+        hour=hours,
+        minute=minutes,
+        second=seconds,
+        tzinfo=timezone.utc
+    )
+
+    # Convert the UTC datetime object to an ISO 8601 string
+    iso_string = utc_datetime.isoformat()
+    
+    return iso_string
